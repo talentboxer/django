@@ -4,6 +4,7 @@ from django.core.checks import Error, Warning as DjangoWarning
 from django.db import connection, models
 from django.test import SimpleTestCase, TestCase, skipIfDBFeature
 from django.test.utils import isolate_apps, override_settings
+from django.utils.functional import lazy
 from django.utils.timezone import now
 from django.utils.translation import gettext_lazy as _
 
@@ -39,25 +40,7 @@ class AutoFieldTests(SimpleTestCase):
 
 
 @isolate_apps('invalid_models_tests')
-class BooleanFieldTests(SimpleTestCase):
-
-    def test_nullable_boolean_field(self):
-        class Model(models.Model):
-            field = models.BooleanField(null=True)
-
-        field = Model._meta.get_field('field')
-        self.assertEqual(field.check(), [
-            Error(
-                'BooleanFields do not accept null values.',
-                hint='Use a NullBooleanField instead.',
-                obj=field,
-                id='fields.E110',
-            ),
-        ])
-
-
-@isolate_apps('invalid_models_tests')
-class CharFieldTests(TestCase):
+class CharFieldTests(SimpleTestCase):
 
     def test_valid_field(self):
         class Model(models.Model):
@@ -67,7 +50,8 @@ class CharFieldTests(TestCase):
                     ('1', 'item1'),
                     ('2', 'item2'),
                 ],
-                db_index=True)
+                db_index=True,
+            )
 
         field = Model._meta.get_field('field')
         self.assertEqual(field.check(), [])
@@ -190,18 +174,30 @@ class CharFieldTests(TestCase):
         class Model(models.Model):
             field = models.CharField(max_length=10, choices=[(1, 2, 3), (1, 2, 3)])
 
-        field = Model._meta.get_field('field')
-        self.assertEqual(field.check(), [
-            Error(
-                "'choices' must be an iterable containing (actual value, human readable name) tuples.",
-                obj=field,
-                id='fields.E005',
-            ),
-        ])
+        class Model2(models.Model):
+            field = models.IntegerField(choices=[0])
+
+        for model in (Model, Model2):
+            with self.subTest(model.__name__):
+                field = model._meta.get_field('field')
+                self.assertEqual(field.check(), [
+                    Error(
+                        "'choices' must be an iterable containing (actual "
+                        "value, human readable name) tuples.",
+                        obj=field,
+                        id='fields.E005',
+                    ),
+                ])
 
     def test_choices_containing_lazy(self):
         class Model(models.Model):
             field = models.CharField(max_length=10, choices=[['1', _('1')], ['2', _('2')]])
+
+        self.assertEqual(Model._meta.get_field('field').check(), [])
+
+    def test_lazy_choices(self):
+        class Model(models.Model):
+            field = models.CharField(max_length=10, choices=lazy(lambda: [[1, '1'], [2, '2']], tuple)())
 
         self.assertEqual(Model._meta.get_field('field').check(), [])
 
@@ -316,7 +312,7 @@ class CharFieldTests(TestCase):
 
 
 @isolate_apps('invalid_models_tests')
-class DateFieldTests(TestCase):
+class DateFieldTests(SimpleTestCase):
     maxDiff = None
 
     def test_auto_now_and_auto_now_add_raise_error(self):
@@ -379,7 +375,7 @@ class DateFieldTests(TestCase):
 
 
 @isolate_apps('invalid_models_tests')
-class DateTimeFieldTests(TestCase):
+class DateTimeFieldTests(SimpleTestCase):
     maxDiff = None
 
     def test_fix_default_value(self):
@@ -607,7 +603,7 @@ class ImageFieldTests(SimpleTestCase):
         expected = [] if pillow_installed else [
             Error(
                 'Cannot use ImageField because Pillow is not installed.',
-                hint=('Get Pillow at https://pypi.python.org/pypi/Pillow '
+                hint=('Get Pillow at https://pypi.org/project/Pillow/ '
                       'or run command "pip install Pillow".'),
                 obj=field,
                 id='fields.E210',
@@ -621,21 +617,28 @@ class IntegerFieldTests(SimpleTestCase):
 
     def test_max_length_warning(self):
         class Model(models.Model):
-            value = models.IntegerField(max_length=2)
+            integer = models.IntegerField(max_length=2)
+            biginteger = models.BigIntegerField(max_length=2)
+            smallinteger = models.SmallIntegerField(max_length=2)
+            positiveinteger = models.PositiveIntegerField(max_length=2)
+            positivesmallinteger = models.PositiveSmallIntegerField(max_length=2)
 
-        field = Model._meta.get_field('value')
-        self.assertEqual(field.check(), [
-            DjangoWarning(
-                "'max_length' is ignored when used with IntegerField",
-                hint="Remove 'max_length' from field",
-                obj=field,
-                id='fields.W122',
-            )
-        ])
+        for field in Model._meta.get_fields():
+            if field.auto_created:
+                continue
+            with self.subTest(name=field.name):
+                self.assertEqual(field.check(), [
+                    DjangoWarning(
+                        "'max_length' is ignored when used with %s." % field.__class__.__name__,
+                        hint="Remove 'max_length' from field",
+                        obj=field,
+                        id='fields.W122',
+                    )
+                ])
 
 
 @isolate_apps('invalid_models_tests')
-class TimeFieldTests(TestCase):
+class TimeFieldTests(SimpleTestCase):
     maxDiff = None
 
     def test_fix_default_value(self):

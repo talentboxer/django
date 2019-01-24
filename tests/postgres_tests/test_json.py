@@ -4,11 +4,12 @@ from decimal import Decimal
 
 from django.core import checks, exceptions, serializers
 from django.core.serializers.json import DjangoJSONEncoder
+from django.db.models import Q
 from django.forms import CharField, Form, widgets
 from django.test.utils import isolate_apps
 from django.utils.html import escape
 
-from . import PostgreSQLTestCase
+from . import PostgreSQLSimpleTestCase, PostgreSQLTestCase
 from .models import JSONModel, PostgreSQLModel
 
 try:
@@ -177,6 +178,20 @@ class TestQuerying(PostgreSQLTestCase):
             [self.objs[7], self.objs[8]]
         )
 
+    def test_none_key(self):
+        self.assertSequenceEqual(JSONModel.objects.filter(field__j=None), [self.objs[8]])
+
+    def test_none_key_exclude(self):
+        obj = JSONModel.objects.create(field={'j': 1})
+        self.assertSequenceEqual(JSONModel.objects.exclude(field__j=None), [obj])
+
+    def test_isnull_key_or_none(self):
+        obj = JSONModel.objects.create(field={'a': None})
+        self.assertSequenceEqual(
+            JSONModel.objects.filter(Q(field__a__isnull=True) | Q(field__a=None)),
+            self.objs[:7] + self.objs[9:] + [obj]
+        )
+
     def test_contains(self):
         self.assertSequenceEqual(
             JSONModel.objects.filter(field__contains={'a': 'b'}),
@@ -286,7 +301,7 @@ class TestQuerying(PostgreSQLTestCase):
 
 
 @isolate_apps('postgres_tests')
-class TestChecks(PostgreSQLTestCase):
+class TestChecks(PostgreSQLSimpleTestCase):
 
     def test_invalid_default(self):
         class MyModel(PostgreSQLModel):
@@ -321,23 +336,33 @@ class TestChecks(PostgreSQLTestCase):
         self.assertEqual(model.check(), [])
 
 
-class TestSerialization(PostgreSQLTestCase):
+class TestSerialization(PostgreSQLSimpleTestCase):
     test_data = (
-        '[{"fields": {"field": {"a": "b", "c": null}, "field_custom": null}, '
+        '[{"fields": {"field": %s, "field_custom": null}, '
         '"model": "postgres_tests.jsonmodel", "pk": null}]'
+    )
+    test_values = (
+        # (Python value, serialized value),
+        ({'a': 'b', 'c': None}, '{"a": "b", "c": null}'),
+        ('abc', '"abc"'),
+        ('{"a": "a"}', '"{\\"a\\": \\"a\\"}"'),
     )
 
     def test_dumping(self):
-        instance = JSONModel(field={'a': 'b', 'c': None})
-        data = serializers.serialize('json', [instance])
-        self.assertJSONEqual(data, self.test_data)
+        for value, serialized in self.test_values:
+            with self.subTest(value=value):
+                instance = JSONModel(field=value)
+                data = serializers.serialize('json', [instance])
+                self.assertJSONEqual(data, self.test_data % serialized)
 
     def test_loading(self):
-        instance = list(serializers.deserialize('json', self.test_data))[0].object
-        self.assertEqual(instance.field, {'a': 'b', 'c': None})
+        for value, serialized in self.test_values:
+            with self.subTest(value=value):
+                instance = list(serializers.deserialize('json', self.test_data % serialized))[0].object
+                self.assertEqual(instance.field, value)
 
 
-class TestValidation(PostgreSQLTestCase):
+class TestValidation(PostgreSQLSimpleTestCase):
 
     def test_not_serializable(self):
         field = JSONField()
@@ -353,7 +378,7 @@ class TestValidation(PostgreSQLTestCase):
         self.assertEqual(field.clean(datetime.timedelta(days=1), None), datetime.timedelta(days=1))
 
 
-class TestFormField(PostgreSQLTestCase):
+class TestFormField(PostgreSQLSimpleTestCase):
 
     def test_valid(self):
         field = forms.JSONField()

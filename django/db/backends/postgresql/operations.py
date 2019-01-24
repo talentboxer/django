@@ -7,6 +7,11 @@ from django.db.backends.base.operations import BaseDatabaseOperations
 
 class DatabaseOperations(BaseDatabaseOperations):
     cast_char_field_without_max_length = 'varchar'
+    explain_prefix = 'EXPLAIN'
+    cast_data_types = {
+        'AutoField': 'integer',
+        'BigAutoField': 'bigint',
+    }
 
     def unification_cast_sql(self, output_field):
         internal_type = output_field.get_internal_type()
@@ -26,6 +31,8 @@ class DatabaseOperations(BaseDatabaseOperations):
         if lookup_type == 'week_day':
             # For consistency across backends, we return Sunday=1, Saturday=7.
             return "EXTRACT('dow' FROM %s) + 1" % field_name
+        elif lookup_type == 'iso_year':
+            return "EXTRACT('isoyear' FROM %s)" % field_name
         else:
             return "EXTRACT('%s' FROM %s)" % (lookup_type, field_name)
 
@@ -258,3 +265,20 @@ class DatabaseOperations(BaseDatabaseOperations):
                 'and FOLLOWING.'
             )
         return start_, end_
+
+    def explain_query_prefix(self, format=None, **options):
+        prefix = super().explain_query_prefix(format)
+        extra = {}
+        if format:
+            extra['FORMAT'] = format
+        if options:
+            extra.update({
+                name.upper(): 'true' if value else 'false'
+                for name, value in options.items()
+            })
+        if extra:
+            prefix += ' (%s)' % ', '.join('%s %s' % i for i in extra.items())
+        return prefix
+
+    def ignore_conflicts_suffix_sql(self, ignore_conflicts=None):
+        return 'ON CONFLICT DO NOTHING' if ignore_conflicts else super().ignore_conflicts_suffix_sql(ignore_conflicts)

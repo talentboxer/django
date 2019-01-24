@@ -25,7 +25,6 @@ from django.utils.dateparse import (
     parse_date, parse_datetime, parse_duration, parse_time,
 )
 from django.utils.duration import duration_microseconds, duration_string
-from django.utils.encoding import force_bytes, smart_text
 from django.utils.functional import Promise, cached_property
 from django.utils.ipv6 import clean_ipv6_address
 from django.utils.itercompat import is_iterable
@@ -244,10 +243,10 @@ class Field(RegisterLookupMixin):
         if not self.choices:
             return []
 
-        def is_value(value):
-            return isinstance(value, (str, Promise)) or not is_iterable(value)
+        def is_value(value, accept_promise=True):
+            return isinstance(value, (str, Promise) if accept_promise else str) or not is_iterable(value)
 
-        if is_value(self.choices):
+        if is_value(self.choices, accept_promise=False):
             return [
                 checks.Error(
                     "'choices' must be an iterable (e.g., a list or tuple).",
@@ -260,7 +259,7 @@ class Field(RegisterLookupMixin):
         for choices_group in self.choices:
             try:
                 group_name, group_choices = choices_group
-            except ValueError:
+            except (TypeError, ValueError):
                 # Containing non-pairs
                 break
             try:
@@ -808,7 +807,7 @@ class Field(RegisterLookupMixin):
             return return_None
         return str  # return empty string
 
-    def get_choices(self, include_blank=True, blank_choice=BLANK_CHOICE_DASH, limit_choices_to=None):
+    def get_choices(self, include_blank=True, blank_choice=BLANK_CHOICE_DASH, limit_choices_to=None, ordering=()):
         """
         Return choices with a default blank choices included, for use
         as <select> choices for this field.
@@ -816,8 +815,7 @@ class Field(RegisterLookupMixin):
         if self.choices:
             choices = list(self.choices)
             if include_blank:
-                named_groups = isinstance(choices[0][1], (list, tuple))
-                blank_defined = not named_groups and any(choice in ('', None) for choice, __ in choices)
+                blank_defined = any(choice in ('', None) for choice, _ in self.flatchoices)
                 if not blank_defined:
                     choices = blank_choice + choices
             return choices
@@ -829,8 +827,8 @@ class Field(RegisterLookupMixin):
             else 'pk'
         )
         return (blank_choice if include_blank else []) + [
-            (choice_func(x), smart_text(x))
-            for x in rel_model._default_manager.complex_filter(limit_choices_to)
+            (choice_func(x), str(x))
+            for x in rel_model._default_manager.complex_filter(limit_choices_to).order_by(*ordering)
         ]
 
     def value_to_string(self, obj):
@@ -856,9 +854,11 @@ class Field(RegisterLookupMixin):
 
     def formfield(self, form_class=None, choices_form_class=None, **kwargs):
         """Return a django.forms.Field instance for this field."""
-        defaults = {'required': not self.blank,
-                    'label': capfirst(self.verbose_name),
-                    'help_text': self.help_text}
+        defaults = {
+            'required': not self.blank,
+            'label': capfirst(self.verbose_name),
+            'help_text': self.help_text,
+        }
         if self.has_default():
             if callable(self.default):
                 defaults['initial'] = self.default
@@ -988,51 +988,25 @@ class BooleanField(Field):
     empty_strings_allowed = False
     default_error_messages = {
         'invalid': _("'%(value)s' value must be either True or False."),
+        'invalid_nullable': _("'%(value)s' value must be either True, False, or None."),
     }
     description = _("Boolean (Either True or False)")
-
-    def __init__(self, *args, **kwargs):
-        kwargs['blank'] = True
-        super().__init__(*args, **kwargs)
-
-    def check(self, **kwargs):
-        return [
-            *super().check(**kwargs),
-            *self._check_null(**kwargs),
-        ]
-
-    def _check_null(self, **kwargs):
-        if getattr(self, 'null', False):
-            return [
-                checks.Error(
-                    'BooleanFields do not accept null values.',
-                    hint='Use a NullBooleanField instead.',
-                    obj=self,
-                    id='fields.E110',
-                )
-            ]
-        else:
-            return []
-
-    def deconstruct(self):
-        name, path, args, kwargs = super().deconstruct()
-        del kwargs['blank']
-        return name, path, args, kwargs
 
     def get_internal_type(self):
         return "BooleanField"
 
     def to_python(self, value):
+        if self.null and value in self.empty_values:
+            return None
         if value in (True, False):
-            # if value is 1 or 0 than it's equal to True or False, but we want
-            # to return a true bool for semantic reasons.
+            # 1/0 are equal to True/False. bool() converts former to latter.
             return bool(value)
         if value in ('t', 'True', '1'):
             return True
         if value in ('f', 'False', '0'):
             return False
         raise exceptions.ValidationError(
-            self.error_messages['invalid'],
+            self.error_messages['invalid_nullable' if self.null else 'invalid'],
             code='invalid',
             params={'value': value},
         )
@@ -1044,15 +1018,16 @@ class BooleanField(Field):
         return self.to_python(value)
 
     def formfield(self, **kwargs):
-        # Unlike most fields, BooleanField figures out include_blank from
-        # self.null instead of self.blank.
         if self.choices:
             include_blank = not (self.has_default() or 'initial' in kwargs)
             defaults = {'choices': self.get_choices(include_blank=include_blank)}
         else:
-            defaults = {'form_class': forms.BooleanField}
-        defaults.update(kwargs)
-        return super().formfield(**defaults)
+            form_class = forms.NullBooleanField if self.null else forms.BooleanField
+            # In HTML checkboxes, 'required' means "must be checked" which is
+            # different from the choices case ("must select some value").
+            # required=False allows unchecked checkboxes.
+            defaults = {'form_class': form_class, 'required': False}
+        return super().formfield(**{**defaults, **kwargs})
 
 
 class CharField(Field):
@@ -1800,7 +1775,7 @@ class IntegerField(Field):
         if self.max_length is not None:
             return [
                 checks.Warning(
-                    "'max_length' is ignored when used with IntegerField",
+                    "'max_length' is ignored when used with %s." % self.__class__.__name__,
                     hint="Remove 'max_length' from field",
                     obj=self,
                     id='fields.W122',
@@ -1854,7 +1829,6 @@ class IntegerField(Field):
 
 
 class BigIntegerField(IntegerField):
-    empty_strings_allowed = False
     description = _("Big (8 byte) integer")
     MAX_BIGINT = 9223372036854775807
 
@@ -1980,10 +1954,10 @@ class GenericIPAddressField(Field):
         })
 
 
-class NullBooleanField(Field):
-    empty_strings_allowed = False
+class NullBooleanField(BooleanField):
     default_error_messages = {
         'invalid': _("'%(value)s' value must be either None, True or False."),
+        'invalid_nullable': _("'%(value)s' value must be either None, True or False."),
     }
     description = _("Boolean (Either True, False or None)")
 
@@ -2000,35 +1974,6 @@ class NullBooleanField(Field):
 
     def get_internal_type(self):
         return "NullBooleanField"
-
-    def to_python(self, value):
-        if value is None:
-            return None
-        if value in (True, False):
-            return bool(value)
-        if value in ('None',):
-            return None
-        if value in ('t', 'True', '1'):
-            return True
-        if value in ('f', 'False', '0'):
-            return False
-        raise exceptions.ValidationError(
-            self.error_messages['invalid'],
-            code='invalid',
-            params={'value': value},
-        )
-
-    def get_prep_value(self, value):
-        value = super().get_prep_value(value)
-        if value is None:
-            return None
-        return self.to_python(value)
-
-    def formfield(self, **kwargs):
-        return super().formfield(**{
-            'form_class': forms.NullBooleanField,
-            **kwargs,
-        })
 
 
 class PositiveIntegerRelDbTypeMixin:
@@ -2335,12 +2280,12 @@ class BinaryField(Field):
 
     def value_to_string(self, obj):
         """Binary data is serialized as base64"""
-        return b64encode(force_bytes(self.value_from_object(obj))).decode('ascii')
+        return b64encode(self.value_from_object(obj)).decode('ascii')
 
     def to_python(self, value):
         # If it's a string, it should be base64-encoded data
         if isinstance(value, str):
-            return memoryview(b64decode(force_bytes(value)))
+            return memoryview(b64decode(value.encode('ascii')))
         return value
 
 
@@ -2348,7 +2293,7 @@ class UUIDField(Field):
     default_error_messages = {
         'invalid': _("'%(value)s' is not a valid UUID."),
     }
-    description = 'Universally unique identifier'
+    description = _('Universally unique identifier')
     empty_strings_allowed = False
 
     def __init__(self, verbose_name=None, **kwargs):
@@ -2375,8 +2320,9 @@ class UUIDField(Field):
 
     def to_python(self, value):
         if value is not None and not isinstance(value, uuid.UUID):
+            input_form = 'int' if isinstance(value, int) else 'hex'
             try:
-                return uuid.UUID(value)
+                return uuid.UUID(**{input_form: value})
             except (AttributeError, ValueError):
                 raise exceptions.ValidationError(
                     self.error_messages['invalid'],

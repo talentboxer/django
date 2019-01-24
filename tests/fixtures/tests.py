@@ -17,7 +17,8 @@ from django.db import IntegrityError, connection
 from django.test import TestCase, TransactionTestCase, skipUnlessDBFeature
 
 from .models import (
-    Article, Category, PrimaryKeyUUIDModel, ProxySpy, Spy, Tag, Visa,
+    Article, Category, NaturalKeyThing, PrimaryKeyUUIDModel, ProxySpy, Spy,
+    Tag, Visa,
 )
 
 
@@ -52,15 +53,19 @@ class DumpDataAssertMixin:
                          use_base_manager=False, exclude_list=[], primary_keys=''):
         new_io = StringIO()
         filename = filename and os.path.join(tempfile.gettempdir(), filename)
-        management.call_command('dumpdata', *args, **{'format': format,
-                                                      'stdout': new_io,
-                                                      'stderr': new_io,
-                                                      'output': filename,
-                                                      'use_natural_foreign_keys': natural_foreign_keys,
-                                                      'use_natural_primary_keys': natural_primary_keys,
-                                                      'use_base_manager': use_base_manager,
-                                                      'exclude': exclude_list,
-                                                      'primary_keys': primary_keys})
+        management.call_command(
+            'dumpdata',
+            *args,
+            format=format,
+            stdout=new_io,
+            stderr=new_io,
+            output=filename,
+            use_natural_foreign_keys=natural_foreign_keys,
+            use_natural_primary_keys=natural_primary_keys,
+            use_base_manager=use_base_manager,
+            exclude=exclude_list,
+            primary_keys=primary_keys,
+        )
         if filename:
             with open(filename, "r") as f:
                 command_output = f.read()
@@ -334,7 +339,8 @@ class FixtureLoadingTests(DumpDataAssertMixin, TestCase):
         self._dumpdata_assert(
             ['sites', 'fixtures'],
             '[{"pk": 1, "model": "sites.site", "fields": {"domain": "example.com", "name": "example.com"}}]',
-            exclude_list=['fixtures'])
+            exclude_list=['fixtures'],
+        )
 
         # Excluding fixtures.Article/Book should leave fixtures.Category
         self._dumpdata_assert(
@@ -494,16 +500,9 @@ class FixtureLoadingTests(DumpDataAssertMixin, TestCase):
         parent.
         """
         ProxySpy.objects.create(name='Paul')
-
-        with warnings.catch_warnings(record=True) as warning_list:
-            warnings.simplefilter('always')
+        msg = "fixtures.ProxySpy is a proxy model and won't be serialized."
+        with self.assertWarnsMessage(ProxyModelWarning, msg):
             self._dumpdata_assert(['fixtures.ProxySpy'], '[]')
-        warning = warning_list.pop()
-        self.assertEqual(warning.category, ProxyModelWarning)
-        self.assertEqual(
-            str(warning.message),
-            "fixtures.ProxySpy is a proxy model and won't be serialized."
-        )
 
     def test_dumpdata_proxy_with_concrete(self):
         """
@@ -786,3 +785,21 @@ class FixtureTransactionTests(DumpDataAssertMixin, TransactionTestCase):
             '<Article: Time to reform copyright>',
             '<Article: Poker has no place on ESPN>',
         ])
+
+
+class ForwardReferenceTests(TestCase):
+    def test_forward_reference_fk(self):
+        management.call_command('loaddata', 'forward_reference_fk.json', verbosity=0)
+        self.assertEqual(NaturalKeyThing.objects.count(), 2)
+        t1, t2 = NaturalKeyThing.objects.all()
+        self.assertEqual(t1.other_thing, t2)
+        self.assertEqual(t2.other_thing, t1)
+
+    def test_forward_reference_m2m(self):
+        management.call_command('loaddata', 'forward_reference_m2m.json', verbosity=0)
+        self.assertEqual(NaturalKeyThing.objects.count(), 3)
+        t1 = NaturalKeyThing.objects.get_by_natural_key('t1')
+        self.assertQuerysetEqual(
+            t1.other_things.order_by('key'),
+            ['<NaturalKeyThing: t2>', '<NaturalKeyThing: t3>']
+        )

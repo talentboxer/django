@@ -84,7 +84,7 @@ class TestUtilsHtml(SimpleTestCase):
             ('d<a:b c:d>e</p>f', 'def'),
             ('<strong>foo</strong><a href="http://example.com">bar</a>', 'foobar'),
             # caused infinite loop on Pythons not patched with
-            # http://bugs.python.org/issue20288
+            # https://bugs.python.org/issue20288
             ('&gotcha&#;<>', '&gotcha&#;<>'),
             ('<sc<!-- -->ript>test<<!-- -->/script>', 'ript>test'),
             ('<script>alert()</script>&h', 'alert()h'),
@@ -183,6 +183,7 @@ class TestUtilsHtml(SimpleTestCase):
              'http://example.com/?q=http%3A%2F%2Fexample.com%2F%3Fx%3D1%26q%3Ddjango'),
             ('http://example.com/?q=http%3A%2F%2Fexample.com%2F%3Fx%3D1%26q%3Ddjango',
              'http://example.com/?q=http%3A%2F%2Fexample.com%2F%3Fx%3D1%26q%3Ddjango'),
+            ('http://.www.f oo.bar/', 'http://.www.f%20oo.bar/'),
         )
         # IDNs are properly quoted
         for value, output in items:

@@ -1,6 +1,6 @@
 import ipaddress
-import os
 import re
+from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
 
 from django.core.exceptions import ValidationError
@@ -94,7 +94,7 @@ class URLValidator(RegexValidator):
 
     regex = _lazy_re_compile(
         r'^(?:[a-z0-9\.\-\+]*)://'  # scheme is validated separately
-        r'(?:\S+(?::\S*)?@)?'  # user:pass authentication
+        r'(?:[^\s:@/]+(?::[^\s:@/]*)?@)?'  # user:pass authentication
         r'(?:' + ipv4_re + '|' + ipv6_re + '|' + host_re + ')'
         r'(?::\d{2,5})?'  # port
         r'(?:[/?#][^\s]*)?'  # resource path
@@ -317,8 +317,9 @@ class BaseValidator:
 
     def __call__(self, value):
         cleaned = self.clean(value)
-        params = {'limit_value': self.limit_value, 'show_value': cleaned, 'value': value}
-        if self.compare(cleaned, self.limit_value):
+        limit_value = self.limit_value() if callable(self.limit_value) else self.limit_value
+        params = {'limit_value': limit_value, 'show_value': cleaned, 'value': value}
+        if self.compare(cleaned, limit_value):
             raise ValidationError(self.message, code=self.code, params=params)
 
     def __eq__(self, other):
@@ -480,7 +481,7 @@ class FileExtensionValidator:
             self.code = code
 
     def __call__(self, value):
-        extension = os.path.splitext(value.name)[1][1:].lower()
+        extension = Path(value.name).suffix[1:].lower()
         if self.allowed_extensions is not None and extension not in self.allowed_extensions:
             raise ValidationError(
                 self.message,

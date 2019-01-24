@@ -10,7 +10,6 @@ import tempfile
 import threading
 import time
 import unittest
-import warnings
 from unittest import mock
 
 from django.conf import settings
@@ -93,10 +92,7 @@ class DummyCacheTests(SimpleTestCase):
 
     def test_get_many(self):
         "get_many returns nothing for the dummy cache backend"
-        cache.set('a', 'a')
-        cache.set('b', 'b')
-        cache.set('c', 'c')
-        cache.set('d', 'd')
+        cache.set_many({'a': 'a', 'b': 'b', 'c': 'c', 'd': 'd'})
         self.assertEqual(cache.get_many(['a', 'c', 'd']), {})
         self.assertEqual(cache.get_many(['a', 'b', 'e']), {})
 
@@ -106,8 +102,7 @@ class DummyCacheTests(SimpleTestCase):
 
     def test_delete(self):
         "Cache deletion is transparently ignored on the dummy cache backend"
-        cache.set("key1", "spam")
-        cache.set("key2", "eggs")
+        cache.set_many({'key1': 'spam', 'key2': 'eggs'})
         self.assertIsNone(cache.get("key1"))
         cache.delete("key1")
         self.assertIsNone(cache.get("key1"))
@@ -140,6 +135,10 @@ class DummyCacheTests(SimpleTestCase):
             cache.decr('answer')
         with self.assertRaises(ValueError):
             cache.decr('does_not_exist')
+
+    def test_touch(self):
+        """Dummy cache can't do touch()."""
+        self.assertIs(cache.touch('whatever'), False)
 
     def test_data_types(self):
         "All data types are ignored equally by the dummy cache"
@@ -265,9 +264,7 @@ def caches_setting_for_tests(base=None, exclude=None, **params):
 
 class BaseCacheTests:
     # A common set of tests to apply to all cache backends
-
-    def setUp(self):
-        self.factory = RequestFactory()
+    factory = RequestFactory()
 
     def tearDown(self):
         cache.clear()
@@ -303,17 +300,14 @@ class BaseCacheTests:
 
     def test_get_many(self):
         # Multiple cache keys can be returned using get_many
-        cache.set('a', 'a')
-        cache.set('b', 'b')
-        cache.set('c', 'c')
-        cache.set('d', 'd')
+        cache.set_many({'a': 'a', 'b': 'b', 'c': 'c', 'd': 'd'})
         self.assertEqual(cache.get_many(['a', 'c', 'd']), {'a': 'a', 'c': 'c', 'd': 'd'})
         self.assertEqual(cache.get_many(['a', 'b', 'e']), {'a': 'a', 'b': 'b'})
+        self.assertEqual(cache.get_many(iter(['a', 'b', 'e'])), {'a': 'a', 'b': 'b'})
 
     def test_delete(self):
         # Cache keys can be deleted
-        cache.set("key1", "spam")
-        cache.set("key2", "eggs")
+        cache.set_many({'key1': 'spam', 'key2': 'eggs'})
         self.assertEqual(cache.get("key1"), "spam")
         cache.delete("key1")
         self.assertIsNone(cache.get("key1"))
@@ -427,6 +421,23 @@ class BaseCacheTests:
         self.assertEqual(cache.get("expire2"), "newvalue")
         self.assertFalse(cache.has_key("expire3"))
 
+    def test_touch(self):
+        # cache.touch() updates the timeout.
+        cache.set('expire1', 'very quickly', timeout=1)
+        self.assertIs(cache.touch('expire1', timeout=4), True)
+        time.sleep(2)
+        self.assertTrue(cache.has_key('expire1'))
+        time.sleep(3)
+        self.assertFalse(cache.has_key('expire1'))
+
+        # cache.touch() works without the timeout argument.
+        cache.set('expire1', 'very quickly', timeout=1)
+        self.assertIs(cache.touch('expire1'), True)
+        time.sleep(2)
+        self.assertTrue(cache.has_key('expire1'))
+
+        self.assertIs(cache.touch('nonexistent'), False)
+
     def test_unicode(self):
         # Unicode values can be cached
         stuff = {
@@ -500,9 +511,7 @@ class BaseCacheTests:
 
     def test_delete_many(self):
         # Multiple keys can be deleted using delete_many
-        cache.set("key1", "spam")
-        cache.set("key2", "eggs")
-        cache.set("key3", "ham")
+        cache.set_many({'key1': 'spam', 'key2': 'eggs', 'key3': 'ham'})
         cache.delete_many(["key1", "key2"])
         self.assertIsNone(cache.get("key1"))
         self.assertIsNone(cache.get("key2"))
@@ -510,8 +519,7 @@ class BaseCacheTests:
 
     def test_clear(self):
         # The cache can be emptied using clear
-        cache.set("key1", "spam")
-        cache.set("key2", "eggs")
+        cache.set_many({'key1': 'spam', 'key2': 'eggs'})
         cache.clear()
         self.assertIsNone(cache.get("key1"))
         self.assertIsNone(cache.get("key2"))
@@ -549,6 +557,11 @@ class BaseCacheTests:
         self.assertEqual(cache.get('key3'), 'sausage')
         self.assertEqual(cache.get('key4'), 'lobster bisque')
 
+        cache.set('key5', 'belgian fries', timeout=1)
+        cache.touch('key5', timeout=None)
+        time.sleep(2)
+        self.assertEqual(cache.get('key5'), 'belgian fries')
+
     def test_zero_timeout(self):
         """
         Passing in zero into timeout results in a value that is not cached
@@ -562,6 +575,10 @@ class BaseCacheTests:
         cache.set_many({'key3': 'sausage', 'key4': 'lobster bisque'}, 0)
         self.assertIsNone(cache.get('key3'))
         self.assertIsNone(cache.get('key4'))
+
+        cache.set('key5', 'belgian fries', timeout=5)
+        cache.touch('key5', timeout=0)
+        self.assertIsNone(cache.get('key5'))
 
     def test_float_timeout(self):
         # Make sure a timeout given as a float doesn't crash anything.
@@ -602,12 +619,8 @@ class BaseCacheTests:
         cache.key_func = func
 
         try:
-            with warnings.catch_warnings(record=True) as w:
-                warnings.simplefilter("always")
+            with self.assertWarnsMessage(CacheKeyWarning, expected_warning):
                 cache.set(key, 'value')
-                self.assertEqual(len(w), 1)
-                self.assertIsInstance(w[0].message, CacheKeyWarning)
-                self.assertEqual(str(w[0].message.args[0]), expected_warning)
         finally:
             cache.key_func = old_func
 
@@ -990,6 +1003,20 @@ class DBCacheTests(BaseCacheTests, TransactionTestCase):
             table_name = connection.ops.quote_name('test cache table')
             cursor.execute('DROP TABLE %s' % table_name)
 
+    def test_get_many_num_queries(self):
+        cache.set_many({'a': 1, 'b': 2})
+        cache.set('expired', 'expired', 0.01)
+        with self.assertNumQueries(1):
+            self.assertEqual(cache.get_many(['a', 'b']), {'a': 1, 'b': 2})
+        time.sleep(0.02)
+        with self.assertNumQueries(2):
+            self.assertEqual(cache.get_many(['a', 'b', 'expired']), {'a': 1, 'b': 2})
+
+    def test_delete_many_num_queries(self):
+        cache.set_many({'a': 1, 'b': 2, 'c': 3})
+        with self.assertNumQueries(1):
+            cache.delete_many(['a', 'b', 'c'])
+
     def test_zero_cull(self):
         self._perform_cull_test(caches['zero_cull'], 50, 18)
 
@@ -1058,7 +1085,7 @@ class DBCacheRouter:
     },
 )
 class CreateCacheTableForDBCacheTests(TestCase):
-    multi_db = True
+    databases = {'default', 'other'}
 
     @override_settings(DATABASE_ROUTERS=[DBCacheRouter()])
     def test_createcachetable_observes_database_router(self):
@@ -1555,11 +1582,9 @@ class DefaultNonExpiringCacheKeyTests(SimpleTestCase):
 )
 class CacheUtils(SimpleTestCase):
     """TestCase for django.utils.cache functions."""
-
-    def setUp(self):
-        self.host = 'www.example.com'
-        self.path = '/cache/test/'
-        self.factory = RequestFactory(HTTP_HOST=self.host)
+    host = 'www.example.com'
+    path = '/cache/test/'
+    factory = RequestFactory(HTTP_HOST=host)
 
     def tearDown(self):
         cache.clear()
@@ -1705,10 +1730,8 @@ class PrefixedCacheUtils(CacheUtils):
     },
 )
 class CacheHEADTest(SimpleTestCase):
-
-    def setUp(self):
-        self.path = '/cache/test/'
-        self.factory = RequestFactory()
+    path = '/cache/test/'
+    factory = RequestFactory()
 
     def tearDown(self):
         cache.clear()
@@ -1756,11 +1779,9 @@ class CacheHEADTest(SimpleTestCase):
         ('es', 'Spanish'),
     ],
 )
-class CacheI18nTest(TestCase):
-
-    def setUp(self):
-        self.path = '/cache/test/'
-        self.factory = RequestFactory()
+class CacheI18nTest(SimpleTestCase):
+    path = '/cache/test/'
+    factory = RequestFactory()
 
     def tearDown(self):
         cache.clear()
@@ -1985,10 +2006,9 @@ def csrf_view(request):
     },
 )
 class CacheMiddlewareTest(SimpleTestCase):
+    factory = RequestFactory()
 
     def setUp(self):
-        super().setUp()
-        self.factory = RequestFactory()
         self.default_cache = caches['default']
         self.other_cache = caches['other']
 
@@ -2197,9 +2217,8 @@ class TestWithTemplateResponse(SimpleTestCase):
     content being complete (which is not necessarily always the case
     with a TemplateResponse)
     """
-    def setUp(self):
-        self.path = '/cache/test/'
-        self.factory = RequestFactory()
+    path = '/cache/test/'
+    factory = RequestFactory()
 
     def tearDown(self):
         cache.clear()

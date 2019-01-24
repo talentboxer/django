@@ -621,12 +621,12 @@ class ChoiceWidget(Widget):
             'attrs': option_attrs,
             'type': self.input_type,
             'template_name': self.option_template_name,
+            'wrap_label': True,
         }
 
     def get_context(self, name, value, attrs):
         context = super().get_context(name, value, attrs)
         context['widget']['optgroups'] = self.optgroups(name, context['widget']['value'], attrs)
-        context['wrap_label'] = True
         return context
 
     def id_for_label(self, id_, index='0'):
@@ -649,6 +649,8 @@ class ChoiceWidget(Widget):
 
     def format_value(self, value):
         """Return selected values as a list."""
+        if value is None and self.allow_multiple_selected:
+            return []
         if not isinstance(value, (tuple, list)):
             value = [value]
         return [str(v) if v is not None else '' for v in value]
@@ -694,27 +696,35 @@ class NullBooleanSelect(Select):
     """
     def __init__(self, attrs=None):
         choices = (
-            ('1', _('Unknown')),
-            ('2', _('Yes')),
-            ('3', _('No')),
+            ('unknown', _('Unknown')),
+            ('true', _('Yes')),
+            ('false', _('No')),
         )
         super().__init__(attrs, choices)
 
     def format_value(self, value):
         try:
-            return {True: '2', False: '3', '2': '2', '3': '3'}[value]
+            return {
+                True: 'true', False: 'false',
+                'true': 'true', 'false': 'false',
+                # For backwards compatibility with Django < 2.2.
+                '2': 'true', '3': 'false',
+            }[value]
         except KeyError:
-            return '1'
+            return 'unknown'
 
     def value_from_datadict(self, data, files, name):
         value = data.get(name)
         return {
-            '2': True,
             True: True,
             'True': True,
-            '3': False,
             'False': False,
             False: False,
+            'true': True,
+            'false': False,
+            # For backwards compatibility with Django < 2.2.
+            '2': True,
+            '3': False,
         }.get(value)
 
 

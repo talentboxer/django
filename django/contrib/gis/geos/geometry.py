@@ -87,15 +87,21 @@ class GEOSGeometryBase(GEOSBase):
         return '<%s object at %s>' % (self.geom_type, hex(addressof(self.ptr)))
 
     # Pickling support
+    def _to_pickle_wkb(self):
+        return bytes(self.wkb)
+
+    def _from_pickle_wkb(self, wkb):
+        return wkb_r().read(memoryview(wkb))
+
     def __getstate__(self):
         # The pickled state is simply a tuple of the WKB (in string form)
         # and the SRID.
-        return bytes(self.wkb), self.srid
+        return self._to_pickle_wkb(), self.srid
 
     def __setstate__(self, state):
         # Instantiating from the tuple state that was pickled.
         wkb, srid = state
-        ptr = wkb_r().read(memoryview(wkb))
+        ptr = self._from_pickle_wkb(wkb)
         if not ptr:
             raise GEOSException('Invalid Geometry loaded from pickled state.')
         self.ptr = ptr
@@ -113,7 +119,7 @@ class GEOSGeometryBase(GEOSBase):
         parts = ewkt.split(b';', 1)
         if len(parts) == 2:
             srid_part, wkt = parts
-            match = re.match(b'SRID=(?P<srid>\-?\d+)', srid_part)
+            match = re.match(br'SRID=(?P<srid>\-?\d+)', srid_part)
             if not match:
                 raise ValueError('EWKT has invalid SRID part.')
             srid = int(match.group('srid'))

@@ -162,7 +162,7 @@ class SetLanguageTests(TestCase):
         """
         The set_language view decodes the HTTP_REFERER URL.
         """
-        # The url() & view must exist for this to work as a regression test.
+        # The URL & view must exist for this to work as a regression test.
         self.assertEqual(reverse('with_parameter', kwargs={'parameter': 'x'}), '/test-setlang/x/')
         lang_code = self._get_inactive_language_code()
         encoded_url = '/test-setlang/%C3%A4/'  # (%C3%A4 decodes to ä)
@@ -206,6 +206,7 @@ class I18NViewTests(SimpleTestCase):
                 catalog = gettext.translation('djangojs', locale_dir, [lang_code])
                 trans_txt = catalog.gettext('this is to be translated')
                 response = self.client.get('/jsi18n/')
+                self.assertEqual(response['Content-Type'], 'text/javascript; charset="utf-8"')
                 # response content must include a line like:
                 # "this is to be translated": <value of trans_txt Python variable>
                 # json.dumps() is used to be able to check unicode strings

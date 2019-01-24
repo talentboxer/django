@@ -16,6 +16,7 @@ class DatabaseSchemaEditor(BaseDatabaseSchemaEditor):
     sql_alter_column_no_default = "MODIFY %(column)s DEFAULT NULL"
     sql_delete_column = "ALTER TABLE %(table)s DROP COLUMN %(column)s"
     sql_delete_table = "DROP TABLE %(table)s CASCADE CONSTRAINTS"
+    sql_create_index = "CREATE INDEX %(name)s ON %(table)s (%(columns)s)%(extra)s"
 
     def quote_value(self, value):
         if isinstance(value, (datetime.date, datetime.time, datetime.datetime)):
@@ -143,6 +144,12 @@ class DatabaseSchemaEditor(BaseDatabaseSchemaEditor):
         if db_type is not None and db_type.lower() in self.connection._limited_data_types:
             return False
         return create_index
+
+    def _unique_should_be_added(self, old_field, new_field):
+        return (
+            super()._unique_should_be_added(old_field, new_field) and
+            not self._field_became_primary_key(old_field, new_field)
+        )
 
     def _is_identity_column(self, table_name, column_name):
         with self.connection.cursor() as cursor:

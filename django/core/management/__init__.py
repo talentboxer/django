@@ -118,8 +118,8 @@ def call_command(command_name, *args, **options):
     }
     arg_options = {opt_mapping.get(key, key): value for key, value in options.items()}
     parse_args = [str(a) for a in args]
-    # Any required arguments which are passed in via **options must must be
-    # passed to parse_args().
+    # Any required arguments which are passed in via **options must be passed
+    # to parse_args().
     parse_args += [
         '{}={}'.format(min(opt.option_strings), arg_options[opt.dest])
         for opt in parser._actions if opt.required and opt.dest in options
@@ -257,7 +257,7 @@ class ManagementUtility:
         except IndexError:
             curr = ''
 
-        subcommands = list(get_commands()) + ['help']
+        subcommands = [*get_commands(), 'help']
         options = [('--help', False)]
 
         # subcommand
@@ -311,7 +311,7 @@ class ManagementUtility:
         # Preprocess options to extract --settings and --pythonpath.
         # These options could affect the commands that are available, so they
         # must be processed early.
-        parser = CommandParser(None, usage="%(prog)s subcommand [options] [args]", add_help=False)
+        parser = CommandParser(usage='%(prog)s subcommand [options] [args]', add_help=False, allow_abbrev=False)
         parser.add_argument('--settings')
         parser.add_argument('--pythonpath')
         parser.add_argument('args', nargs='*')  # catch-all

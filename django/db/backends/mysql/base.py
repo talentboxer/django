@@ -1,7 +1,7 @@
 """
 MySQL database backend for Django.
 
-Requires mysqlclient: https://pypi.python.org/pypi/mysqlclient/
+Requires mysqlclient: https://pypi.org/project/mysqlclient/
 """
 import re
 
@@ -32,8 +32,8 @@ from .schema import DatabaseSchemaEditor                    # isort:skip
 from .validation import DatabaseValidation                  # isort:skip
 
 version = Database.version_info
-if version < (1, 3, 7):
-    raise ImproperlyConfigured('mysqlclient 1.3.7 or newer is required; you have %s.' % Database.__version__)
+if version < (1, 3, 13):
+    raise ImproperlyConfigured('mysqlclient 1.3.13 or newer is required; you have %s.' % Database.__version__)
 
 
 # MySQLdb returns TIME columns as timedelta -- they are more like timedelta in
@@ -141,8 +141,6 @@ class DatabaseWrapper(BaseDatabaseWrapper):
         'iexact': 'LIKE %s',
         'contains': 'LIKE BINARY %s',
         'icontains': 'LIKE %s',
-        'regex': 'REGEXP BINARY %s',
-        'iregex': 'REGEXP %s',
         'gt': '> %s',
         'gte': '>= %s',
         'lt': '< %s',
@@ -328,11 +326,19 @@ class DatabaseWrapper(BaseDatabaseWrapper):
             return True
 
     @cached_property
-    def mysql_version(self):
+    def mysql_server_info(self):
         with self.temporary_connection() as cursor:
             cursor.execute('SELECT VERSION()')
-            server_info = cursor.fetchone()[0]
-        match = server_version_re.match(server_info)
+            return cursor.fetchone()[0]
+
+    @cached_property
+    def mysql_version(self):
+        match = server_version_re.match(self.mysql_server_info)
         if not match:
-            raise Exception('Unable to determine MySQL version from version string %r' % server_info)
+            raise Exception('Unable to determine MySQL version from version string %r' % self.mysql_server_info)
         return tuple(int(x) for x in match.groups())
+
+    @cached_property
+    def mysql_is_mariadb(self):
+        # MariaDB isn't officially supported.
+        return 'mariadb' in self.mysql_server_info.lower()

@@ -630,7 +630,7 @@ The ``manage_articles.html`` template might look like this:
 
 .. code-block:: html+django
 
-    <form method="post" action="">
+    <form method="post">
         {{ formset.management_form }}
         <table>
             {% for form in formset %}
@@ -644,7 +644,7 @@ deal with the management form:
 
 .. code-block:: html+django
 
-    <form method="post" action="">
+    <form method="post">
         <table>
             {{ formset }}
         </table>
@@ -662,7 +662,7 @@ If you manually render fields in the template, you can render
 
 .. code-block:: html+django
 
-    <form method="post" action="">
+    <form method="post">
         {{ formset.management_form }}
         {% for form in formset %}
             <ul>
@@ -687,7 +687,7 @@ Using more than one formset in a view
 You are able to use more than one formset in a view if you like. Formsets
 borrow much of its behavior from forms. With that said you are able to use
 ``prefix`` to prefix formset form field names with a given value to allow
-more than one formset to be sent to a view without name clashing. Lets take
+more than one formset to be sent to a view without name clashing. Let's take
 a look at how this might be accomplished::
 
     from django.forms import formset_factory
